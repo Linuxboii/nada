@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nada — the Game of Life, played as a raga</title>
+<meta name="description" content="Nada turns Conway's Game of Life into music: a playhead sweeps the board, every living cell is a note of a raga, and each bar the colony evolves. A tanpura drone and the synth are built from raw Web Audio oscillators.">
+<meta property="og:title" content="Nada — the Game of Life, played as a raga">
+<meta property="og:description" content="Cellular automata as a sequencer. Bhupali, Yaman, Malkauns, Bhairav. A synthesized tanpura underneath.">
+<meta name="theme-color" content="#101014">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23101014'/%3E%3Crect x='7' y='7' width='5' height='5' rx='1' fill='%23e9a23b'/%3E%3Crect x='13.5' y='13.5' width='5' height='5' rx='1' fill='%23e9a23b'/%3E%3Crect x='20' y='13.5' width='5' height='5' rx='1' fill='%23e9a23b'/%3E%3Crect x='7' y='20' width='5' height='5' rx='1' fill='%23e9a23b'/%3E%3Crect x='13.5' y='20' width='5' height='5' rx='1' fill='%23e9a23b'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f4f1ea; --panel: #fbfaf6; --ink: #1c1b1f; --muted: #6f6b74; --line: #ddd8cc;
+    --cell-off: #e8e3d7; --cell-on: #2b2737; --cell-hot: #d9822b; --col: rgba(217,130,43,.14);
+    --accent: #c46a17;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101014; --panel: #17171d; --ink: #ece9f1; --muted: #8d8996; --line: #26252e;
+      --cell-off: #1d1c24; --cell-on: #6f67a8; --cell-hot: #f0aa4a; --col: rgba(240,170,74,.10);
+      --accent: #f0aa4a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body { font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 36px; }
+  header h1 { margin: 0; font-size: clamp(28px, 4vw, 40px); letter-spacing: -.02em; line-height: 1.05; }
+  header h1 span { color: var(--accent); font-weight: 500; margin-right: .3em; }
+  header p { margin: 8px 0 0; color: var(--muted); max-width: 64ch; }
+  .layout { margin-top: 22px; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  .board { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+  canvas { display: block; width: 100%; aspect-ratio: 1; touch-action: none; cursor: crosshair; border-radius: 8px; }
+  canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .side { display: flex; flex-direction: column; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .play { width: 100%; padding: 12px; font: inherit; font-weight: 600; font-size: 16px; border-radius: 10px; border: 0; background: var(--accent); color: #fff; cursor: pointer; }
+  @media (prefers-color-scheme: dark) { .play { color: #17130c; } }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 0; font-size: 14px; }
+  .row label { color: var(--muted); }
+  .row .mono { white-space: nowrap; min-width: 62px; text-align: right; font-size: 13px; }
+  input[type=range] { width: 120px; accent-color: var(--accent); }
+  select { font: inherit; font-size: 14px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .seeds { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .seeds button, .tog { font: inherit; font-size: 13.5px; padding: 7px 8px; border-radius: 9px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+  .seeds button:hover, .tog:hover { border-color: var(--muted); }
+  .tog[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .stats b { display: block; font-size: 20px; }
+  .stats span { font-size: 11px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+  .note { font-size: 13px; color: var(--muted); margin: 0; }
+  .swara { margin-top: 8px; font-size: 13px; color: var(--muted); min-height: 20px; }
+  footer { margin-top: 26px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 13px; }
+  footer a { color: inherit; text-underline-offset: 3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span lang="sa">नाद</span>Nada</h1>
+    <p>Conway's Game of Life, played as a raga. A playhead sweeps the board, every living cell it crosses is a note, and at the end of each bar the colony takes one step of evolution. Paint cells, press play.</p>
+  </header>
+
+  <div class="layout">
+    <div class="board">
+      <canvas id="cv" width="800" height="800" tabindex="0" aria-label="16 by 16 Life board. Click or drag to toggle cells. Rows are pitches, columns are time."></canvas>
+    </div>
+    <aside class="side">
+      <div class="card">
+        <button class="play" id="play">Play</button>
+        <div class="swara mono" id="swara" aria-live="off"></div>
+      </div>
+      <div class="card">
+        <h2>Sound</h2>
+        <div class="row"><label for="raga">Raga</label><select id="raga"></select></div>
+        <div class="row"><label for="tempo">Tempo</label><input type="range" id="tempo" min="60" max="180" value="104"><span class="mono" id="tempoV"></span></div>
+        <div class="row"><label for="evolve">Evolve</label><select id="evolve"><option value="bar">every bar</option><option value="half">every half bar</option><option value="step">every step</option></select></div>
+        <div class="row"><span style="color:var(--muted)">Tanpura</span><button class="tog" id="drone" aria-pressed="true">On</button></div>
+        <div class="row"><span style="color:var(--muted)">Keep it alive</span><button class="tog" id="alive" aria-pressed="true">On</button></div>
+      </div>
+      <div class="card">
+        <h2>Seed</h2>
+        <div class="seeds">
+          <button data-seed="acorn">Acorn</button>
+          <button data-seed="gliders">Two gliders</button>
+          <button data-seed="pulsar">Pulsar</button>
+          <button data-seed="random">Random</button>
+          <button data-seed="lwss">Spaceship</button>
+          <button data-seed="clear">Clear</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="stats mono"><div><b id="gen">0</b><span>Generation</span></div><div><b id="pop">0</b><span>Alive</span></div><div><b id="notes">0</b><span>Notes</span></div></div>
+      </div>
+      <p class="note">The board wraps at its edges. “Keep it alive” drops a glider in when the colony freezes or repeats, so the music never quite settles.</p>
+    </aside>
+  </div>
+
+  <footer>
+    <span><span lang="sa">नाद</span> (nāda) — Sanskrit for primordial sound, the vibration under everything.</span>
+    <span>A deliberately useless thing by <a href="https://sushanth.avlokai.com/projects">Sushanth Kasturi</a></span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const N = 16;
+  let grid = new Uint8Array(N * N);
+  let born = new Float32Array(N * N);  // animation timers
+  let flash = new Float32Array(N * N);
+  const idx = (x, y) => ((y + N) % N) * N + ((x + N) % N);
+
+  // ---------- ragas: semitone offsets of the swaras used, ascending
+  const RAGAS = {
+    bhupali: { name: 'Bhupali', notes: [0, 2, 4, 7, 9], names: ['Sa', 'Re', 'Ga', 'Pa', 'Dha'] },
+    yaman: { name: 'Yaman', notes: [0, 2, 4, 6, 7, 9, 11], names: ['Sa', 'Re', 'Ga', 'Ma♯', 'Pa', 'Dha', 'Ni'] },
+    malkauns: { name: 'Malkauns', notes: [0, 3, 5, 8, 10], names: ['Sa', 'ga', 'ma', 'dha', 'ni'] },
+    bhairav: { name: 'Bhairav', notes: [0, 1, 4, 5, 7, 8, 11], names: ['Sa', 're', 'Ga', 'Ma', 'Pa', 'dha', 'Ni'] },
+    hamsadhwani: { name: 'Hamsadhwani', notes: [0, 2, 4, 7, 11], names: ['Sa', 'Re', 'Ga', 'Pa', 'Ni'] },
+  };
+  const ragaSel = document.getElementById('raga');
+  ragaSel.innerHTML = Object.entries(RAGAS).map(([k, r]) => `<option value="${k}">${r.name}</option>`).join('');
+  const SA = 146.83; // D3 — a comfortable tanpura Sa
+  function rowPitch(row) { // row 0 is the top of the board = highest note
+    const r = RAGAS[ragaSel.value], k = N - 1 - row;
+    const oct = Math.floor(k / r.notes.length), deg = k % r.notes.length;
+    return { hz: SA / 2 * Math.pow(2, oct + r.notes[deg] / 12), name: r.names[deg], oct };
+  }
+
+  // ---------- Life
+  function step() {
+    const next = new Uint8Array(N * N);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) n += grid[idx(x + dx, y + dy)];
+      const i = y * N + x, alive = grid[i];
+      next[i] = (alive && (n === 2 || n === 3)) || (!alive && n === 3) ? 1 : 0;
+      if (next[i] && !alive) born[i] = 1;
+    }
+    grid = next; gen++;
+    remember();
+  }
+  // stagnation: compare against the last few boards
+  let history = [], gen = 0;
+  const key = () => { let s = ''; for (let i = 0; i < grid.length; i += 8) { let b = 0; for (let k = 0; k < 8; k++) b = (b << 1) | grid[i + k]; s += String.fromCharCode(65 + b % 26, 65 + (b >> 5)); } return s; };
+  function remember() {
+    const k = key();
+    const stuck = history.includes(k) || !grid.some(Boolean);
+    history.push(k); if (history.length > 6) history.shift();
+    if (stuck && aliveOn) { dropGlider(); history = []; }
+  }
+  function dropGlider() {
+    const shapes = [[[1, 0], [2, 1], [0, 2], [1, 2], [2, 2]], [[1, 0], [0, 1], [0, 2], [1, 2], [2, 2]], [[0, 0], [1, 0], [2, 0], [0, 1], [1, 2]]];
+    const s = shapes[(Math.random() * shapes.length) | 0], ox = (Math.random() * N) | 0, oy = (Math.random() * N) | 0;
+    for (const [x, y] of s) { const i = idx(ox + x, oy + y); if (!grid[i]) born[i] = 1; grid[i] = 1; }
+  }
+
+  // ---------- seeds
+  const SEEDS = {
+    acorn: [[1, 0], [3, 1], [0, 2], [1, 2], [4, 2], [5, 2], [6, 2]],
+    gliders: [[1, 0], [2, 1], [0, 2], [1, 2], [2, 2], [9, 8], [8, 9], [8, 10], [9, 10], [10, 10]],
+    lwss: [[1, 0], [4, 0], [0, 1], [0, 2], [4, 2], [0, 3], [1, 3], [2, 3], [3, 3]],
+    pulsar: (() => { // a 13x13 period-3 oscillator, trimmed to fit
+      const p = [], a = [2, 3, 4, 8, 9, 10];
+      for (const v of a) for (const h of [0, 5, 7, 12]) { p.push([v, h]); p.push([h, v]); }
+      return p.map(([x, y]) => [x + 1, y + 1]);
+    })(),
+  };
+  function seed(name) {
+    grid.fill(0); born.fill(0); history = []; gen = 0;
+    if (name === 'random') { for (let i = 0; i < grid.length; i++) if (Math.random() < 0.28) { grid[i] = 1; born[i] = 1; } }
+    else if (SEEDS[name]) {
+      const pts = SEEDS[name];
+      const w = Math.max(...pts.map((p) => p[0])) + 1, h = Math.max(...pts.map((p) => p[1])) + 1;
+      const ox = Math.floor((N - w) / 2), oy = Math.floor((N - h) / 2);
+      for (const [x, y] of pts) { const i = idx(ox + x, oy + y); grid[i] = 1; born[i] = 1; }
+    }
+    updateStats();
+  }
+  document.querySelector('.seeds').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) seed(b.dataset.seed); });
+
+  // ---------- audio
+  let ac = null, master, verbSend, delay, droneBus;
+  function makeImpulse(ctx, seconds, decay) {
+    const len = Math.floor(ctx.sampleRate * seconds), buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+    return buf;
+  }
+  function initAudio() {
+    if (ac) return;
+    ac = new (window.AudioContext || window.webkitAudioContext)();
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -16; comp.ratio.value = 3; comp.attack.value = 0.01; comp.release.value = 0.2;
+    master = ac.createGain(); master.gain.value = 0.8;
+    master.connect(comp); comp.connect(ac.destination);
+    const verb = ac.createConvolver(); verb.buffer = makeImpulse(ac, 3.2, 2.6);
+    verbSend = ac.createGain(); verbSend.gain.value = 0.32; verbSend.connect(verb); verb.connect(master);
+    // tempo-synced dotted-eighth delay with a darkening feedback path
+    delay = ac.createDelay(2); const fb = ac.createGain(), tone = ac.createBiquadFilter();
+    fb.gain.value = 0.32; tone.type = 'lowpass'; tone.frequency.value = 2600;
+    delay.connect(tone); tone.connect(fb); fb.connect(delay);
+    const delayOut = ac.createGain(); delayOut.gain.value = 0.22; tone.connect(delayOut); delayOut.connect(master);
+    droneBus = ac.createGain(); droneBus.gain.value = droneOn ? 1 : 0; droneBus.connect(master); droneBus.connect(verbSend);
+    setDelayTime();
+  }
+  function setDelayTime() { if (delay) delay.delayTime.setTargetAtTime(60 / tempo() * 0.75, ac.currentTime, 0.05); }
+
+  // a plucked, slightly breathy voice: two detuned oscillators into an enveloped low-pass
+  function note(hz, t, dur, gain) {
+    const o1 = ac.createOscillator(), o2 = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
+    o1.type = 'triangle'; o2.type = 'sine';
+    o1.frequency.value = hz; o2.frequency.value = hz * 2.003; // a hint of the octave, a hint of beating
+    const g2 = ac.createGain(); g2.gain.value = 0.25;
+    f.type = 'lowpass'; f.Q.value = 6;
+    f.frequency.setValueAtTime(hz * 1.5, t);
+    f.frequency.linearRampToValueAtTime(hz * 7, t + 0.012);
+    f.frequency.exponentialRampToValueAtTime(hz * 1.2, t + dur * 0.9);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(gain * 0.35, t + 0.18);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o1.connect(f); o2.connect(g2); g2.connect(f); f.connect(g);
+    g.connect(master); g.connect(verbSend); g.connect(delay);
+    o1.start(t); o2.start(t); o1.stop(t + dur + 0.05); o2.stop(t + dur + 0.05);
+  }
+  // tanpura: Pa – Sa – Sa – low Sa, each string a bright saw that blooms then rings away
+  const TANPURA = [1.5, 2, 2, 1];
+  let droneNext = 0, droneIx = 0;
+  function pluckString(ratio, t) {
+    const hz = SA / 2 * ratio;
+    const o = ac.createOscillator(), o2 = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
+    o.type = 'sawtooth'; o2.type = 'sawtooth'; o.frequency.value = hz; o2.frequency.value = hz * 1.0018;
+    f.type = 'bandpass'; f.Q.value = 0.9;
+    // the jivari buzz: a resonance that sweeps slowly through the harmonics
+    f.frequency.setValueAtTime(hz * 9, t); f.frequency.exponentialRampToValueAtTime(hz * 3, t + 3.6);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 4.2);
+    o.connect(f); o2.connect(f); f.connect(g); g.connect(droneBus);
+    o.start(t); o2.start(t); o.stop(t + 4.3); o2.stop(t + 4.3);
+  }
+
+  // ---------- transport: a look-ahead scheduler on the audio clock
+  const tempoEl = document.getElementById('tempo');
+  const tempo = () => +tempoEl.value;
+  let playing = false, stepIx = 0, nextT = 0, timer = 0;
+  const visQ = []; // {t, col, notes}
+  let notesPlayed = 0;
+  const stepDur = () => 60 / tempo() / 4; // sixteenth notes
+
+  function scheduleStep(col, t) {
+    const live = [];
+    for (let y = 0; y < N; y++) if (grid[y * N + col]) live.push(y);
+    const g = 0.16 / Math.sqrt(Math.max(1, live.length));
+    const dur = stepDur() * 3.2;
+    for (const y of live) note(rowPitch(y).hz, t, dur, g);
+    notesPlayed += live.length;
+    visQ.push({ t, col, rows: live });
+  }
+  function scheduler() {
+    const ahead = 0.12;
+    while (nextT < ac.currentTime + ahead) {
+      scheduleStep(stepIx, nextT);
+      if (droneOn && nextT >= droneNext) {
+        pluckString(TANPURA[droneIx % 4], Math.max(nextT, droneNext));
+        droneIx++; droneNext = Math.max(nextT, droneNext) + 60 / tempo() * 1.5;
+      }
+      nextT += stepDur();
+      stepIx = (stepIx + 1) % N;
+      const mode = evolveSel.value;
+      if (mode === 'step' || (mode === 'half' && stepIx % 8 === 0) || (mode === 'bar' && stepIx === 0)) evolveAt.push(nextT);
+    }
+    timer = setTimeout(scheduler, 25);
+  }
+  // evolution happens on the visual clock, exactly when its step is heard
+  const evolveAt = [];
+  const evolveSel = document.getElementById('evolve');
+
+  const playBtn = document.getElementById('play');
+  playBtn.addEventListener('click', async () => {
+    initAudio();
+    if (ac.state === 'suspended') await ac.resume();
+    playing = !playing;
+    playBtn.textContent = playing ? 'Stop' : 'Play';
+    if (playing) { stepIx = 0; nextT = ac.currentTime + 0.06; droneNext = nextT; evolveAt.length = 0; scheduler(); }
+    else { clearTimeout(timer); visQ.length = 0; evolveAt.length = 0; playCol = -1; }
+  });
+  tempoEl.addEventListener('input', () => { document.getElementById('tempoV').textContent = tempo() + ' bpm'; setDelayTime(); });
+  tempoEl.dispatchEvent(new Event('input'));
+
+  let droneOn = true, aliveOn = true;
+  function bindToggle(id, set) {
+    const b = document.getElementById(id);
+    b.addEventListener('click', () => { const on = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', String(on)); b.textContent = on ? 'On' : 'Off'; set(on); });
+  }
+  bindToggle('drone', (on) => { droneOn = on; if (droneBus) droneBus.gain.setTargetAtTime(on ? 1 : 0, ac.currentTime, 0.3); });
+  bindToggle('alive', (on) => { aliveOn = on; });
+
+  // ---------- drawing
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  let colors = {};
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    colors = { off: cs.getPropertyValue('--cell-off').trim(), on: cs.getPropertyValue('--cell-on').trim(), hot: cs.getPropertyValue('--cell-hot').trim(), col: cs.getPropertyValue('--col').trim(), ink: cs.getPropertyValue('--muted').trim() };
+  }
+  readColors();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors);
+  function resize() {
+    const r = cv.getBoundingClientRect(), d = Math.min(2, devicePixelRatio || 1);
+    cv.width = Math.round(r.width * d); cv.height = Math.round(r.width * d);
+  }
+  addEventListener('resize', resize); resize();
+
+  let playCol = -1, lastRows = [];
+  const swaraEl = document.getElementById('swara');
+  function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h); ctx.fill(); }
+
+  function draw(now) {
+    if (ac && playing) {
+      const t = ac.currentTime;
+      while (visQ.length && visQ[0].t <= t) {
+        const v = visQ.shift();
+        playCol = v.col; lastRows = v.rows;
+        for (const y of v.rows) flash[y * N + v.col] = 1;
+        if (v.rows.length) {
+          const names = [...new Set(v.rows.map((y) => rowPitch(y).name))];
+          swaraEl.textContent = names.join(' · ');
+        }
+      }
+      while (evolveAt.length && evolveAt[0] <= t) { evolveAt.shift(); step(); updateStats(); }
+    }
+    const dt = Math.min(0.1, (now - (draw.last || now)) / 1000); draw.last = now;
+    const kb = Math.pow(0.86, dt * 60), kf = Math.pow(0.9, dt * 60);
+    const W = cv.width, s = W / N, pad = s * 0.1;
+    ctx.clearRect(0, 0, W, W);
+    if (playCol >= 0) { ctx.fillStyle = colors.col; rr(playCol * s, 0, s, W, s * 0.2); }
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = y * N + x;
+      const b = born[i], f = flash[i];
+      const grow = grid[i] ? 1 - b * 0.5 : 1;
+      const inset = pad + (s - 2 * pad) * (1 - grow) / 2;
+      ctx.fillStyle = grid[i] ? (f > 0.02 ? colors.hot : colors.on) : colors.off;
+      ctx.globalAlpha = grid[i] ? 0.55 + 0.45 * Math.max(f, 1 - b) : 1;
+      rr(x * s + inset, y * s + inset, s - 2 * inset, s - 2 * inset, s * 0.18);
+      if (f > 0.02 && grid[i]) { // glow
+        ctx.globalAlpha = f * 0.35; ctx.fillStyle = colors.hot;
+        rr(x * s + pad * 0.2, y * s + pad * 0.2, s - pad * 0.4, s - pad * 0.4, s * 0.25);
+      }
+      ctx.globalAlpha = 1;
+      born[i] *= kb; flash[i] *= kf;
+    }
+    requestAnimationFrame(draw);
+  }
+
+  // ---------- painting
+  let painting = -1;
+  function cellAt(e) {
+    const r = cv.getBoundingClientRect();
+    const x = Math.floor((e.clientX - r.left) / r.width * N), y = Math.floor((e.clientY - r.top) / r.height * N);
+    return x >= 0 && y >= 0 && x < N && y < N ? y * N + x : -1;
+  }
+  cv.addEventListener('pointerdown', (e) => {
+    const i = cellAt(e); if (i < 0) return;
+    cv.setPointerCapture(e.pointerId);
+    painting = grid[i] ? 0 : 1; grid[i] = painting; if (painting) born[i] = 1;
+    history = []; updateStats();
+    if (painting && ac && !playing) { note(rowPitch(Math.floor(i / N)).hz, ac.currentTime + 0.01, 0.6, 0.12); }
+  });
+  cv.addEventListener('pointermove', (e) => { if (painting < 0) return; const i = cellAt(e); if (i >= 0 && grid[i] !== painting) { grid[i] = painting; if (painting) born[i] = 1; updateStats(); } });
+  const endPaint = () => { painting = -1; };
+  cv.addEventListener('pointerup', endPaint); cv.addEventListener('pointercancel', endPaint);
+  // keyboard: arrows move a cursor, space toggles — so the board works without a mouse
+  let cur = 0;
+  cv.addEventListener('keydown', (e) => {
+    const m = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -N, ArrowDown: N };
+    if (e.key in m) { cur = (cur + m[e.key] + N * N) % (N * N); flash[cur] = 0.6; e.preventDefault(); }
+    else if (e.key === ' ' || e.key === 'Enter') { grid[cur] ^= 1; if (grid[cur]) born[cur] = 1; updateStats(); e.preventDefault(); }
+  });
+
+  function updateStats() {
+    document.getElementById('gen').textContent = gen;
+    document.getElementById('pop').textContent = grid.reduce((a, b) => a + b, 0);
+    document.getElementById('notes').textContent = notesPlayed.toLocaleString();
+  }
+  setInterval(updateStats, 500);
+
+  seed('acorn');
+  requestAnimationFrame(draw);
+  // test hook: lets an automated check advance the board without audio
+  window.__nada = { step: () => { step(); updateStats(); return grid.reduce((a, b) => a + b, 0); } };
+})();
+</script>
+</body>
+</html>
